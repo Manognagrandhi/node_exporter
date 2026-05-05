@@ -41,12 +41,37 @@ type edacCollector struct {
 	channelCECount *prometheus.Desc
 	channelUECount *prometheus.Desc
 	logger         *slog.Logger
+	logger *slog.Logger
 }
 
 func init() {
 	registerCollector("edac", defaultEnabled, NewEdacCollector)
 }
 
+var (
+	edacCeCount = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, edacSubsystem, "correctable_errors_total"),
+		"Total correctable memory errors.",
+		[]string{"controller"}, nil,
+	)
+	edacUeCount = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, edacSubsystem, "uncorrectable_errors_total"),
+		"Total uncorrectable memory errors.",
+		[]string{"controller"}, nil,
+	)
+	edacCsRowCECount = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, edacSubsystem, "csrow_correctable_errors_total"),
+		"Total correctable memory errors for this csrow.",
+		[]string{"controller", "csrow"}, nil,
+	)
+	edacCsRowUECount = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, edacSubsystem, "csrow_uncorrectable_errors_total"),
+		"Total uncorrectable memory errors for this csrow.",
+		[]string{"controller", "csrow"}, nil,
+	)
+)
+
+// NewEdacCollector returns a new Collector exposing edac stats.
 func NewEdacCollector(logger *slog.Logger) (Collector, error) {
 
 	return &edacCollector{
@@ -118,6 +143,32 @@ func (c *edacCollector) Update(ch chan<- prometheus.Metric) error {
 				controllerNumber,
 			)
 		}
+		if err != nil {
+			return fmt.Errorf("couldn't get ce_count for controller %s: %w", controllerNumber, err)
+		}
+		ch <- prometheus.MustNewConstMetric(
+			edacCeCount, prometheus.CounterValue, float64(value), controllerNumber)
+
+		value, err = readUintFromFile(filepath.Join(controller, "ce_noinfo_count"))
+		if err != nil {
+			return fmt.Errorf("couldn't get ce_noinfo_count for controller %s: %w", controllerNumber, err)
+		}
+		ch <- prometheus.MustNewConstMetric(
+			edacCsRowCECount, prometheus.CounterValue, float64(value), controllerNumber, "unknown")
+
+		value, err = readUintFromFile(filepath.Join(controller, "ue_count"))
+		if err != nil {
+			return fmt.Errorf("couldn't get ue_count for controller %s: %w", controllerNumber, err)
+		}
+		ch <- prometheus.MustNewConstMetric(
+			edacUeCount, prometheus.CounterValue, float64(value), controllerNumber)
+
+		value, err = readUintFromFile(filepath.Join(controller, "ue_noinfo_count"))
+		if err != nil {
+			return fmt.Errorf("couldn't get ue_noinfo_count for controller %s: %w", controllerNumber, err)
+		}
+		ch <- prometheus.MustNewConstMetric(
+			edacCsRowUECount, prometheus.CounterValue, float64(value), controllerNumber, "unknown")
 
 		csrows, err := filepath.Glob(controller + "/csrow[0-9]*")
 
@@ -138,6 +189,8 @@ func (c *edacCollector) Update(ch chan<- prometheus.Metric) error {
 			if err != nil {
 				return err
 			}
+			ch <- prometheus.MustNewConstMetric(
+				edacCsRowCECount, prometheus.CounterValue, float64(value), controllerNumber, csrowNumber)
 
 			for _, chFile := range channelFiles {
 
@@ -184,6 +237,8 @@ func (c *edacCollector) Update(ch chan<- prometheus.Metric) error {
 					)
 				}
 			}
+			ch <- prometheus.MustNewConstMetric(
+				edacCsRowUECount, prometheus.CounterValue, float64(value), controllerNumber, csrowNumber)
 		}
 	}
 
